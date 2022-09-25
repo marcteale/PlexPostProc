@@ -36,16 +36,21 @@
 #
 #******************************************************************************
 
+umask 002
 TMPFOLDER="/tmp"
 ENCODER="ffmpeg"  # Encoder to use:
                   # "ffmpeg" for FFMPEG [DEFAULT]
                   # "handbrake" for HandBrake
                   # "nvtrans" for Plex Transcoder with NVENC support
-RES="720"         # Resolution to convert to:
+
+RES=$(mediainfo --Output='Video;%Height%' "$1")
+BACKUP_RES="720"  # Resolution to convert to:
                   # "480" = 480 Vertical Resolution
                   # "720" = 720 Vertical Resolution
                   # "1080" = 1080 Vertical Resolution
-
+if [ $RES =~ '^[0-9]+$' ]; then
+    RES=BACKUP_RES
+fi
 
 #**************************FFMPEG SPECIFIC SETTINGS****************************
 AUDIO_CODEC="ac3" # From best to worst: libfdk_aac > libmp3lame/eac3/ac3 > aac. But libfdk_acc requires manual compilaton of ffmpeg. For OTA DVR standard acc should be enough.
@@ -76,7 +81,7 @@ check_errs()
         # Function. Parameter 1 is the return code
         # Para. 2 is text to display on failure
         if [ "${1}" -ne "0" ]; then
-           echo "ERROR # ${1} : ${2}" | tee -a $LOGFILE
+           logger  "ERROR # ${1} : ${2}" 
            exit ${1}
         fi
 }
@@ -101,9 +106,6 @@ if [ ! -z "$1" ]; then
    touch "$LOCKFILE.ppplock" # Create the lock file
    check_errs $? "Failed to create temporary lockfile: $LOCKFILE.ppplock"
 
-   LOGFILE="$TMPFOLDER/plex_DVR_post_processing_log"
-   touch $LOGFILE # Create the log file
-
    # Uncomment if you want to adjust the bandwidth for this thread
    #MYPID=$$    # Process ID for current script
    # Adjust niceness of CPU priority for the current process
@@ -115,12 +117,12 @@ if [ ! -z "$1" ]; then
 
    LOG_STRING_1="\n$(date +"%Y%m%d-%H%M%S"): Transcoding $FILENAME to $TEMPFILENAME\n"
    if [[ PPP_CHECK -eq 0 ]]; then
-     printf "$LOG_STRING_1" | tee -a $LOGFILE
+     logger  "$LOG_STRING_1" 
    fi
    if [[ $ENCODER == "handbrake" ]]; then
      LOG_STRING_2="You have selected HandBrake"
          if [[ PPP_CHECK -eq 0 ]]; then
-       printf "$LOG_STRING_1" | tee -a $LOGFILE
+       logger  "$LOG_STRING_1" 
      fi
      HandBrakeCLI -i "$FILENAME" -f mkv --aencoder copy -e qsv_h264 --x264-preset veryfast --x264-profile auto -q 16 --maxHeight $RES --decomb bob -o "$TEMPFILENAME"
      check_errs $? "Failed to convert using Handbrake."
@@ -128,7 +130,7 @@ if [ ! -z "$1" ]; then
      LOG_STRING_2="Using FFMPEG"
      LOG_STRING_3=" [$FILESIZE -> "
      if [[ PPP_CHECK -eq 0 ]]; then
-         printf "$LOG_STRING_2$LOG_STRING_3" | tee -a $LOGFILE
+         logger  "$LOG_STRING_2$LOG_STRING_3" 
      fi
      start_time=$(date +%s)
      if [[ $DOWNMIX_AUDIO -ne  0 ]]; then
@@ -167,7 +169,7 @@ if [ ! -z "$1" ]; then
              check_errs $? "Failed to convert using smart Plex Transcoder (NVENC)."
           fi
    else
-     echo "Oops, invalid ENCODER string.  Using Default [FFMpeg]." | tee -a $LOGFILE
+     logger  "Oops, invalid ENCODER string.  Using Default [FFMpeg]." 
      ffmpeg -i "$FILENAME" -s hd$RES -c:v libx264 -preset veryfast -vf yadif -c:a copy "$TEMPFILENAME"
      check_errs $? "Failed to convert using FFMPEG."
    fi
@@ -178,7 +180,7 @@ if [ ! -z "$1" ]; then
 
    LOG_STRING_5="$(date +"%Y%m%d-%H%M%S"): Finished transcode,"
    if [[ PPP_CHECK -eq 0 ]]; then
-       printf "$LOG_STRING_4$LOG_STRING_5" | tee -a $LOGFILE
+       logger  "$LOG_STRING_4$LOG_STRING_5" 
    fi
 
    rm -f "$FILENAME" # Delete original in .grab folder
@@ -195,34 +197,31 @@ if [ ! -z "$1" ]; then
    while [ true ] ; do
      if ls "$TMPFOLDER/"*".ppplock" 1> /dev/null 2>&1; then
        if  [[ $timeout_counter -eq 0 ]]; then
-           echo "Timeout reached, ending wait" | tee -a $LOGFILE
+           logger  "Timeout reached, ending wait" 
            break
        fi
        if [[ timeout_counter -eq 120 ]]; then #Prevents log spam, after initial message simple '.' will be printed to log.
-           printf "\n$(date +"%Y%m%d-%H%M%S"): Another transcode running. Waiting." | tee -a $LOGFILE
+           logger  "\n$(date +"%Y%m%d-%H%M%S"): Another transcode running. Waiting." 
        else
-           printf "." | tee -a $LOGFILE
+           logger  "." 
        fi
        timeout_counter=$((timeout_counter-1))
        sleep 60
      else
        if  [[ $timeout_counter -lt 119 ]]; then
-           echo "$(date +"%Y%m%d-%H%M%S"): It looks like all scripts are done running, exiting." | tee -a $LOGFILE
+           logger  "$(date +"%Y%m%d-%H%M%S"): It looks like all scripts are done running, exiting." 
        fi
        break
      fi
    done
 
    if [[ PPP_CHECK -eq 1 ]]; then
-       printf "$LOG_STRING_1$LOG_STRING_2$LOG_STRING_3$LOG_STRING_4$LOG_STRING_5" | tee -a $LOGFILE #Doing all together as to not stumble over multiple concurrent processes in log
+       logger  "$LOG_STRING_1$LOG_STRING_2$LOG_STRING_3$LOG_STRING_4$LOG_STRING_5" 
    fi
-   printf " exiting.\n" | tee -a $LOGFILE
+   logger  " exiting.\n" 
 
 else
-   echo "********************************************************" | tee -a $LOGFILE
-   echo "PlexPostProc by nebhead" | tee -a $LOGFILE
-   echo "Usage: $0 FileName" | tee -a $LOGFILE
-   echo "********************************************************" | tee -a $LOGFILE
+   echo "Usage: $0 FileName"
 fi
 
 sleep 3 #Time for things to settle down, move commands to finish etc...

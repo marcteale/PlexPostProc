@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -vx
 
 #******************************************************************************
 #******************************************************************************
@@ -29,12 +29,11 @@
 #      3. Copies the file back to the original .grab folder for final processing
 #
 #  Log:
-#     Single log is generated with timestamped transcodes.
-
-#     Note: Logs are not deleted, so some cleanup of the temp directory may be
-#       required, or a server reboot should clear this folder.
+#     Logs to system log with logger.
 #
 #******************************************************************************
+
+logger -t PlexPostProc.sh Start
 
 umask 002
 TMPFOLDER="/tmp"
@@ -43,12 +42,12 @@ ENCODER="ffmpeg"  # Encoder to use:
                   # "handbrake" for HandBrake
                   # "nvtrans" for Plex Transcoder with NVENC support
 
-RES=$(mediainfo --Output='Video;%Height%' "$1")
+RES=$(/usr/bin/mediainfo --Output='Video;%Height%' "$1")
 BACKUP_RES="720"  # Resolution to convert to:
                   # "480" = 480 Vertical Resolution
                   # "720" = 720 Vertical Resolution
                   # "1080" = 1080 Vertical Resolution
-if [ $RES =~ '^[0-9]+$' ]; then
+if [[ $RES != ?(-)+([[:digit:]]) ]]; then
     RES=BACKUP_RES
 fi
 
@@ -81,7 +80,7 @@ check_errs()
         # Function. Parameter 1 is the return code
         # Para. 2 is text to display on failure
         if [ "${1}" -ne "0" ]; then
-           logger  "ERROR # ${1} : ${2}" 
+           logger -t PlexPostProc.sh  "ERROR # ${1} : ${2}"
            exit ${1}
         fi
 }
@@ -117,12 +116,12 @@ if [ ! -z "$1" ]; then
 
    LOG_STRING_1="\n$(date +"%Y%m%d-%H%M%S"): Transcoding $FILENAME to $TEMPFILENAME\n"
    if [[ PPP_CHECK -eq 0 ]]; then
-     logger  "$LOG_STRING_1" 
+     logger -t PlexPostProc.sh "$LOG_STRING_1"
    fi
    if [[ $ENCODER == "handbrake" ]]; then
      LOG_STRING_2="You have selected HandBrake"
          if [[ PPP_CHECK -eq 0 ]]; then
-       logger  "$LOG_STRING_1" 
+       logger -t PlexPostProc.sh "$LOG_STRING_1"
      fi
      HandBrakeCLI -i "$FILENAME" -f mkv --aencoder copy -e qsv_h264 --x264-preset veryfast --x264-profile auto -q 16 --maxHeight $RES --decomb bob -o "$TEMPFILENAME"
      check_errs $? "Failed to convert using Handbrake."
@@ -130,7 +129,7 @@ if [ ! -z "$1" ]; then
      LOG_STRING_2="Using FFMPEG"
      LOG_STRING_3=" [$FILESIZE -> "
      if [[ PPP_CHECK -eq 0 ]]; then
-         logger  "$LOG_STRING_2$LOG_STRING_3" 
+         logger -t PlexPostProc.sh "$LOG_STRING_2$LOG_STRING_3"
      fi
      start_time=$(date +%s)
      if [[ $DOWNMIX_AUDIO -ne  0 ]]; then
@@ -169,7 +168,7 @@ if [ ! -z "$1" ]; then
              check_errs $? "Failed to convert using smart Plex Transcoder (NVENC)."
           fi
    else
-     logger  "Oops, invalid ENCODER string.  Using Default [FFMpeg]." 
+     logger -t PlexPostProc.sh "Oops, invalid ENCODER string.  Using Default [FFMpeg]."
      ffmpeg -i "$FILENAME" -s hd$RES -c:v libx264 -preset veryfast -vf yadif -c:a copy "$TEMPFILENAME"
      check_errs $? "Failed to convert using FFMPEG."
    fi
@@ -180,7 +179,7 @@ if [ ! -z "$1" ]; then
 
    LOG_STRING_5="$(date +"%Y%m%d-%H%M%S"): Finished transcode,"
    if [[ PPP_CHECK -eq 0 ]]; then
-       logger  "$LOG_STRING_4$LOG_STRING_5" 
+       logger -t PlexPostProc.sh "$LOG_STRING_4$LOG_STRING_5"
    fi
 
    rm -f "$FILENAME" # Delete original in .grab folder
@@ -189,7 +188,7 @@ if [ ! -z "$1" ]; then
    mv -f "$TEMPFILENAME" "${FILENAME%.ts}.mkv" # Move completed tempfile to .grab folder/filename
    check_errs $? "Failed to move converted file: $TEMPFILENAME"
 
-   rm -f "$LOCKFILE.ppplock"* # Delete the lockfile 
+   rm -f "$LOCKFILE.ppplock"* # Delete the lockfile
    check_errs $? "Failed to remove lockfile."
 
    # [WORKAROUND] Wait for any other post-processing scripts to complete before exiting. So that plex doesnt start deleting grab files.
@@ -197,28 +196,28 @@ if [ ! -z "$1" ]; then
    while [ true ] ; do
      if ls "$TMPFOLDER/"*".ppplock" 1> /dev/null 2>&1; then
        if  [[ $timeout_counter -eq 0 ]]; then
-           logger  "Timeout reached, ending wait" 
+           logger -t PlexPostProc.sh "Timeout reached, ending wait"
            break
        fi
        if [[ timeout_counter -eq 120 ]]; then #Prevents log spam, after initial message simple '.' will be printed to log.
-           logger  "\n$(date +"%Y%m%d-%H%M%S"): Another transcode running. Waiting." 
+           logger -t PlexPostProc.sh "\n$(date +"%Y%m%d-%H%M%S"): Another transcode running. Waiting."
        else
-           logger  "." 
+           logger -t PlexPostProc.sh "."
        fi
        timeout_counter=$((timeout_counter-1))
        sleep 60
      else
        if  [[ $timeout_counter -lt 119 ]]; then
-           logger  "$(date +"%Y%m%d-%H%M%S"): It looks like all scripts are done running, exiting." 
+           logger -t PlexPostProc.sh "$(date +"%Y%m%d-%H%M%S"): It looks like all scripts are done running, exiting."
        fi
        break
      fi
    done
 
    if [[ PPP_CHECK -eq 1 ]]; then
-       logger  "$LOG_STRING_1$LOG_STRING_2$LOG_STRING_3$LOG_STRING_4$LOG_STRING_5" 
+       logger -t PlexPostProc.sh  "$LOG_STRING_1$LOG_STRING_2$LOG_STRING_3$LOG_STRING_4$LOG_STRING_5"
    fi
-   logger  " exiting.\n" 
+   logger -t PlexPostProc.sh " exiting.\n"
 
 else
    echo "Usage: $0 FileName"

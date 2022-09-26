@@ -33,7 +33,7 @@
 #
 #******************************************************************************
 
-logger -t PlexPostProc.sh Start
+logger -t PlexPostProc.sh Start transcode process for $1
 
 umask 002
 TMPFOLDER="/tmp"
@@ -80,7 +80,7 @@ check_errs()
         # Function. Parameter 1 is the return code
         # Para. 2 is text to display on failure
         if [ "${1}" -ne "0" ]; then
-           logger -t PlexPostProc.sh  "ERROR # ${1} : ${2}"
+		logger -t PlexPostProc.sh "PlexPostProc.sh exited with exit code ${1}: ${2}"
            exit ${1}
         fi
 }
@@ -114,7 +114,7 @@ if [ ! -z "$1" ]; then
    # Starting Transcoding
    # ********************************************************
 
-   LOG_STRING_1="\n$(date +"%Y%m%d-%H%M%S"): Transcoding $FILENAME to $TEMPFILENAME\n"
+   LOG_STRING_1="Transcoding $FILENAME to $TEMPFILENAME"
    if [[ PPP_CHECK -eq 0 ]]; then
      logger -t PlexPostProc.sh "$LOG_STRING_1"
    fi
@@ -126,23 +126,24 @@ if [ ! -z "$1" ]; then
      HandBrakeCLI -i "$FILENAME" -f mkv --aencoder copy -e qsv_h264 --x264-preset veryfast --x264-profile auto -q 16 --maxHeight $RES --decomb bob -o "$TEMPFILENAME"
      check_errs $? "Failed to convert using Handbrake."
    elif [[ $ENCODER == "ffmpeg" ]]; then
-     LOG_STRING_2="Using FFMPEG"
-     LOG_STRING_3=" [$FILESIZE -> "
+     LOG_STRING_2="Using FFMPEG,"
+     LOG_STRING_3=" File size: $FILESIZE"
      if [[ PPP_CHECK -eq 0 ]]; then
          logger -t PlexPostProc.sh "$LOG_STRING_2$LOG_STRING_3"
      fi
      start_time=$(date +%s)
      if [[ $DOWNMIX_AUDIO -ne  0 ]]; then
-         ffmpeg -i "$FILENAME" -s hd$RES -c:v "$VIDEO_CODEC" -r "$VIDEO_FRAMERATE"  -preset veryfast -crf "$VIDEO_QUALITY" -vf yadif -codec:a "$AUDIO_CODEC" -ac "$DOWNMIX_AUDIO" -b:a "$AUDIO_BITRATE"k -async 1 "$TEMPFILENAME"
+         ffmpeg -err_detect ignore -i "$FILENAME" -s hd$RES -c:v "$VIDEO_CODEC" -r "$VIDEO_FRAMERATE"  -preset veryfast -crf "$VIDEO_QUALITY" -vf yadif -codec:a "$AUDIO_CODEC" -ac "$DOWNMIX_AUDIO" -b:a "$AUDIO_BITRATE"k -async 1 "$TEMPFILENAME"
      else
-         ffmpeg -i "$FILENAME" -s hd$RES -c:v "$VIDEO_CODEC" -r "$VIDEO_FRAMERATE"  -preset veryfast -crf "$VIDEO_QUALITY" -vf yadif -codec:a "$AUDIO_CODEC" -b:a "$AUDIO_BITRATE"k -async 1 "$TEMPFILENAME"
+         ffmpeg -err_detect ignore -i "$FILENAME" -s hd$RES -c:v "$VIDEO_CODEC" -r "$VIDEO_FRAMERATE"  -preset veryfast -crf "$VIDEO_QUALITY" -vf yadif -codec:a "$AUDIO_CODEC" -b:a "$AUDIO_BITRATE"k -async 1 "$TEMPFILENAME"
      fi
+     check_errs $? "Failed to convert using FFMPEG."
      end_time=$(date +%s)
      seconds="$(( end_time - start_time ))"
      minutes_taken="$(( seconds / 60 ))"
      seconds_taken="$(( $seconds - (minutes_taken * 60) ))"
-     LOG_STRING_4="$(ls -lh $TEMPFILENAME | awk ' { print $5 }')] - [$minutes_taken min $seconds_taken sec]\n"
-     check_errs $? "Failed to convert using FFMPEG."
+     logger -t PlexPostProc.sh "Output file size: $(ls -lh $TEMPFILENAME | awk ' { print $5 }')]"
+     logger -t PlexPostProc.sh "Created in [$minutes_taken min $seconds_taken sec]"
    elif [[ $ENCODER == "nvtrans" ]]; then
      export FFMPEG_EXTERNAL_LIBS="$(find ~/Library/Application\ Support/Plex\ Media\ Server/Codecs/ -name "libmpeg2video_decoder.so" -printf "%h\n")/"
      check_errs $? "Failed to convert using smart Plex Transcoder (NVENC). libmpeg2video_decoder.so not found."
@@ -169,18 +170,13 @@ if [ ! -z "$1" ]; then
           fi
    else
      logger -t PlexPostProc.sh "Oops, invalid ENCODER string.  Using Default [FFMpeg]."
-     ffmpeg -i "$FILENAME" -s hd$RES -c:v libx264 -preset veryfast -vf yadif -c:a copy "$TEMPFILENAME"
+     ffmpeg -err_detect ignore -i "$FILENAME" -s hd$RES -c:v libx264 -preset veryfast -vf yadif -c:a copy "$TEMPFILENAME"
      check_errs $? "Failed to convert using FFMPEG."
    fi
 
    # ********************************************************"
    # Encode Done. Performing Cleanup
    # ********************************************************"
-
-   LOG_STRING_5="$(date +"%Y%m%d-%H%M%S"): Finished transcode,"
-   if [[ PPP_CHECK -eq 0 ]]; then
-       logger -t PlexPostProc.sh "$LOG_STRING_4$LOG_STRING_5"
-   fi
 
    rm -f "$FILENAME" # Delete original in .grab folder
    check_errs $? "Failed to remove original file: $FILENAME"
@@ -199,10 +195,8 @@ if [ ! -z "$1" ]; then
            logger -t PlexPostProc.sh "Timeout reached, ending wait"
            break
        fi
-       if [[ timeout_counter -eq 120 ]]; then #Prevents log spam, after initial message simple '.' will be printed to log.
+       if [[ timeout_counter -eq 120 ]]; then
            logger -t PlexPostProc.sh "\n$(date +"%Y%m%d-%H%M%S"): Another transcode running. Waiting."
-       else
-           logger -t PlexPostProc.sh "."
        fi
        timeout_counter=$((timeout_counter-1))
        sleep 60
@@ -214,10 +208,7 @@ if [ ! -z "$1" ]; then
      fi
    done
 
-   if [[ PPP_CHECK -eq 1 ]]; then
-       logger -t PlexPostProc.sh  "$LOG_STRING_1$LOG_STRING_2$LOG_STRING_3$LOG_STRING_4$LOG_STRING_5"
-   fi
-   logger -t PlexPostProc.sh " exiting.\n"
+   logger -t PlexPostProc.sh "Exiting."
 
 else
    echo "Usage: $0 FileName"

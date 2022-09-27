@@ -183,12 +183,13 @@ rm -f "$FILENAME" # Delete original
 check_errs $? "Failed to remove original file: $FILENAME"
 logger -t PlexPostProc.sh "Deleted $FILENAME"
 
-mv -f "$TEMPFILENAME" "${FILENAME%.ts}.mkv" # Move completed tempfile
-check_errs $? "Failed to move converted file: $TEMPFILENAME"
-logger -t PlexPostProc.sh "$TEMPFILENAME moved to ${FILENAME%.ts}.mkv"
+OUTFILE=${FILENAME%.ts}.mkv
+mv -f "$TEMPFILENAME" "${OUTFILE}" # Move completed tempfile
+check_errs $? "Failed to move temp file $TEMPFILENAME to $OUTFILE"
+logger -t PlexPostProc.sh "Temp file moved $TEMPFILENAME to $OUTFILE"
 
 rm -f "$LOCKFILE"* # Delete the lockfile
-check_errs $? "Failed to remove lockfile."
+check_errs $? "Failed to remove lockfile $LOCKFILE"
 logger -t PlexPostProc.sh "Lockfile removed"
 
 # [WORKAROUND] Wait for any other post-processing scripts to complete before exiting. So that plex doesnt start deleting grab files.
@@ -196,8 +197,8 @@ timeout_counter=120
 while [ true ] ; do
     if ls "$TMPFOLDER/"*".ppplock" 1> /dev/null 2>&1; then
         if  [[ $timeout_counter -eq 0 ]]; then
-            logger -t PlexPostProc.sh "Timeout reached, ending wait"
-            break
+            logger -t PlexPostProc.sh "Timeout reached, exiting uncleanly"
+	    exit 1
         fi
         if [[ timeout_counter -eq 120 ]]; then
             logger -t PlexPostProc.sh "Another transcode running, waiting."

@@ -99,14 +99,13 @@ FILENAME=$1  # %FILE% - Filename of original file
 
 FILESIZE="$(ls -lh "$FILENAME" | awk '{ print $5 }')"
 
-RANDFILENAME="$(mktemp)"  # Base random name, will be used for cleanup
-rm -f "$RANDFILENAME" #Cleanup mktemp artifact
-TEMPFILENAME="$RANDFILENAME.mkv"  # Temporary File Name for transcoding
+TEMPFILENAME=$(mktemp --suffix=.mkv)  # Temporary File Name for transcoding
+check_errs $? "Failed to create output file $TEMPFILENAME"
+logger -t PlexPostProc.sh Transcoding to temp file $TEMPFILENAME
 
-LOCKFILE="$(mktemp)"  # [WORKAROUND] Temporary File for blocking simultaneous scripts from ending early
-rm -f "$LOCKFILE" #Clean up mktemp artifact
-touch "$LOCKFILE.ppplock" # Create the lock file
-check_errs $? "Failed to create temporary lockfile: $LOCKFILE.ppplock"
+LOCKFILE="$(mktemp --suffix=.ppplock)"  # [WORKAROUND] Temporary File for blocking simultaneous scripts from ending early
+check_errs $? "Failed to create lockfile $LOCKFILE"
+logger -t PlexPostProc.sh Created lockfile $LOCKFILE
 
 # Uncomment if you want to adjust the bandwidth for this thread
 #MYPID=$$    # Process ID for current script
@@ -188,7 +187,7 @@ mv -f "$TEMPFILENAME" "${FILENAME%.ts}.mkv" # Move completed tempfile
 check_errs $? "Failed to move converted file: $TEMPFILENAME"
 logger -t PlexPostProc.sh "$TEMPFILENAME moved to ${FILENAME%.ts}.mkv"
 
-rm -f "$LOCKFILE.ppplock"* # Delete the lockfile
+rm -f "$LOCKFILE"* # Delete the lockfile
 check_errs $? "Failed to remove lockfile."
 logger -t PlexPostProc.sh "Lockfile removed"
 

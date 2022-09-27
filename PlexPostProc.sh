@@ -98,10 +98,11 @@ logger -t PlexPostProc.sh Start transcode process for $1
 FILENAME=$1  # %FILE% - Filename of original file
 
 FILESIZE="$(ls -lh "$FILENAME" | awk '{ print $5 }')"
+INFILEBYTES=$(stat --printf=%s "$FILENAME")
 
-TEMPFILENAME=$(mktemp --suffix=.mkv)  # Temporary File Name for transcoding
-check_errs $? "Failed to create output file $TEMPFILENAME"
-logger -t PlexPostProc.sh Transcoding to temp file $TEMPFILENAME
+TRANSCODEFILE=$(mktemp -u --suffix=.mkv)  # Temporary File Name for transcoding
+check_errs $? "Failed to create output file $TRANSCODEFILE"
+logger -t PlexPostProc.sh Transcoding to temp file $TRANSCODEFILE
 
 LOCKFILE="$(mktemp --suffix=.ppplock)"  # [WORKAROUND] Temporary File for blocking simultaneous scripts from ending early
 check_errs $? "Failed to create lockfile $LOCKFILE"
@@ -116,7 +117,7 @@ logger -t PlexPostProc.sh Created lockfile $LOCKFILE
 # Starting Transcoding
 # ********************************************************
 
-LOG_STRING_1="Transcoding $FILENAME to $TEMPFILENAME"
+LOG_STRING_1="Transcoding $FILENAME to $TRANSCODEFILE"
 if [[ PPP_CHECK -eq 0 ]]; then
     logger -t PlexPostProc.sh "$LOG_STRING_1"
 fi
@@ -124,7 +125,7 @@ if [[ $ENCODER == "handbrake" ]]; then
     if [[ PPP_CHECK -eq 0 ]]; then
         logger -t PlexPostProc.sh "$LOG_STRING_1"
     fi
-    HandBrakeCLI -i "$FILENAME" -f mkv --aencoder copy -e qsv_h264 --x264-preset veryfast --x264-profile auto -q 16 --maxHeight $RES --decomb bob -o "$TEMPFILENAME"
+    HandBrakeCLI -i "$FILENAME" -f mkv --aencoder copy -e qsv_h264 --x264-preset veryfast --x264-profile auto -q 16 --maxHeight $RES --decomb bob -o "$TRANSCODEFILE"
     check_errs $? "Failed to convert using Handbrake."
 elif [[ $ENCODER == "ffmpeg" ]]; then
     LOG_STRING_3="Input file: $FILESIZE"
@@ -133,10 +134,10 @@ elif [[ $ENCODER == "ffmpeg" ]]; then
     fi
     start_time=$(date +%s)
     if [[ $DOWNMIX_AUDIO -ne  0 ]]; then
-        ffmpeg -i "$FILENAME" -err_detect ignore_err -s hd$RES -c:v "$VIDEO_CODEC" -r "$VIDEO_FRAMERATE"  -preset veryfast -crf "$VIDEO_QUALITY" -vf yadif -codec:a "$AUDIO_CODEC" -ac "$DOWNMIX_AUDIO" -b:a "$AUDIO_BITRATE"k -async 1 "$TEMPFILENAME"
+        ffmpeg -i "$FILENAME" -err_detect ignore_err -s hd$RES -c:v "$VIDEO_CODEC" -r "$VIDEO_FRAMERATE"  -preset veryfast -crf "$VIDEO_QUALITY" -vf yadif -codec:a "$AUDIO_CODEC" -ac "$DOWNMIX_AUDIO" -b:a "$AUDIO_BITRATE"k -async 1 "$TRANSCODEFILE"
         RETVAL=$?
     else
-        ffmpeg -i "$FILENAME" -err_detect ignore_err -s hd$RES -c:v "$VIDEO_CODEC" -r "$VIDEO_FRAMERATE"  -preset veryfast -crf "$VIDEO_QUALITY" -vf yadif -codec:a "$AUDIO_CODEC" -b:a "$AUDIO_BITRATE"k -async 1 "$TEMPFILENAME"
+        ffmpeg -i "$FILENAME" -err_detect ignore_err -s hd$RES -c:v "$VIDEO_CODEC" -r "$VIDEO_FRAMERATE"  -preset veryfast -crf "$VIDEO_QUALITY" -vf yadif -codec:a "$AUDIO_CODEC" -b:a "$AUDIO_BITRATE"k -async 1 "$TRANSCODEFILE"
         RETVAL=$?
     fi
     check_errs $RETVAL "Failed to convert using FFMPEG."
@@ -144,7 +145,7 @@ elif [[ $ENCODER == "ffmpeg" ]]; then
     seconds="$(( end_time - start_time ))"
     minutes_taken="$(( seconds / 60 ))"
     seconds_taken="$(( $seconds - (minutes_taken * 60) ))"
-    logger -t PlexPostProc.sh "Output file: $(ls -lh $TEMPFILENAME | awk ' { print $5 }')"
+    logger -t PlexPostProc.sh "Output file: $(ls -lh $TRANSCODEFILE | awk ' { print $5 }')"
     logger -t PlexPostProc.sh "Created in [$minutes_taken min $seconds_taken sec]"
 elif [[ $ENCODER == "nvtrans" ]]; then
     export FFMPEG_EXTERNAL_LIBS="$(find ~/Library/Application\ Support/Plex\ Media\ Server/Codecs/ -name "libmpeg2video_decoder.so" -printf "%h\n")/"
@@ -157,7 +158,7 @@ elif [[ $ENCODER == "nvtrans" ]]; then
 
     if [[ -z "${HEIGHT}" ]]; then
         # Failed to get dimensions of source... try a dumb transcode.
-        /usr/lib/plexmediaserver/Plex\ Transcoder -y -hide_banner -hwaccel nvdec -i "$FILENAME" -s hd$RES -c:v h264_nvenc -preset veryfast -c:a copy "$TEMPFILENAME"
+        /usr/lib/plexmediaserver/Plex\ Transcoder -y -hide_banner -hwaccel nvdec -i "$FILENAME" -s hd$RES -c:v h264_nvenc -preset veryfast -c:a copy "$TRANSCODEFILE"
         check_errs $? "Failed to convert using simple Plex Transcoder (NVENC)."
     else
         # Smart transcode based on source dimensions and fps
@@ -167,7 +168,7 @@ elif [[ $ENCODER == "nvtrans" ]]; then
         ABR=$(echo - | perl -lane "if (${HEIGHT} < 720) {print 1*${MULTIPLIER}} elsif (${HEIGHT} < 1080) {print 2*${MULTIPLIER}} else {print 4*${MULTIPLIER}}")
         MBR=$(echo - | perl -lane "print ${ABR} * 1.5")
         BUF=$(echo - | perl -lane "print ${MBR} * 2.0")
-        /usr/lib/plexmediaserver/Plex\ Transcoder -y -hide_banner -hwaccel nvdec -i "$FILENAME" -c:v h264_nvenc -b:v "${ABR}M" -maxrate:v "${MBR}M" -profile:v high -bf:v 3 -bufsize:v "${BUF}M" -preset:v hq -forced-idr:v 1 -c:a copy "$TEMPFILENAME"
+        /usr/lib/plexmediaserver/Plex\ Transcoder -y -hide_banner -hwaccel nvdec -i "$FILENAME" -c:v h264_nvenc -b:v "${ABR}M" -maxrate:v "${MBR}M" -profile:v high -bf:v 3 -bufsize:v "${BUF}M" -preset:v hq -forced-idr:v 1 -c:a copy "$TRANSCODEFILE"
         check_errs $? "Failed to convert using smart Plex Transcoder (NVENC)."
     fi
 else
@@ -184,9 +185,10 @@ check_errs $? "Failed to remove original file: $FILENAME"
 logger -t PlexPostProc.sh "Deleted $FILENAME"
 
 OUTFILE=${FILENAME%.ts}.mkv
-mv -f "$TEMPFILENAME" "${OUTFILE}" # Move completed tempfile
-check_errs $? "Failed to move temp file $TEMPFILENAME to $OUTFILE"
-logger -t PlexPostProc.sh "Temp file moved $TEMPFILENAME to $OUTFILE"
+OUTFILEBYTES=$(stat --printf=%s "$OUTFILE")
+mv -f "$TRANSCODEFILE" "${OUTFILE}" # Move completed tempfile
+check_errs $? "Failed to move temp file $TRANSCODEFILE to $OUTFILE"
+logger -t PlexPostProc.sh "Temp file moved $TRANSCODEFILE to $OUTFILE"
 
 rm -f "$LOCKFILE"* # Delete the lockfile
 check_errs $? "Failed to remove lockfile $LOCKFILE"
@@ -198,7 +200,7 @@ while [ true ] ; do
     if ls "$TMPFOLDER/"*".ppplock" 1> /dev/null 2>&1; then
         if  [[ $timeout_counter -eq 0 ]]; then
             logger -t PlexPostProc.sh "Timeout reached, exiting uncleanly"
-	    exit 1
+            exit 1
         fi
         if [[ timeout_counter -eq 120 ]]; then
             logger -t PlexPostProc.sh "Another transcode running, waiting."
@@ -215,3 +217,7 @@ done
 
 sleep 3 #Time for things to settle down, move commands to finish etc...
 logger -t PlexPostProc.sh "Exiting successfully."
+BYTEDIFF=$(expr $(expr $INFILEBYTES - $OUTFILEBYTES) / 1048576)
+logger -t PlexPostProc.sh "Reduced file size by ${BYTEDIFF} MB!"
+
+# vim: ts=4 sw=4 et ai nu
